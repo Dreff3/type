@@ -1,0 +1,68 @@
+const { execSync } = require('child_process');
+
+const limitCommitSha = '666379f508cd727a4fcc4ae7e734875643181cdd';
+const stdout = execSync(`git show -s --format=%ci ${limitCommitSha}`, {
+  encoding: 'utf8',
+});
+const limitDate = stdout.trim();
+
+const processors = {
+  postprocess(_messages, filePath) {
+    let messages = [].concat(..._messages);
+
+    return messages.reduce((acc, message) => {
+      const { line, ruleId } = message;
+      if (ruleId === '@typescript-eslint/no-restricted-imports') {
+        const isInIndex = !!execSync(`git ls-files "${filePath}"`, {
+          encoding: 'utf8',
+        }).trim();
+
+        if (!isInIndex) {
+          return messages;
+        }
+
+        let includeMessage = true;
+        const stdout = execSync(
+          `git blame -L ${line},${line} "${filePath}" -p --since="${limitDate}"`,
+          {
+            encoding: 'utf8',
+          }
+        );
+        let lineSplitted = stdout.split('\n');
+        let [lineCommitSha] = stdout.split(' ');
+
+        const lineIsUncommited =
+          lineCommitSha === '0000000000000000000000000000000000000000';
+
+        if (lineIsUncommited) {
+          includeMessage = true;
+        } else {
+          const isBoundaryCommit = lineSplitted.find(
+            (line) => line === 'boundary'
+          );
+          const isLimitCommitOrBefore =
+            isBoundaryCommit || limitCommitSha === lineCommitSha;
+
+          if (isLimitCommitOrBefore) {
+            includeMessage = false;
+          }
+        }
+
+        if (includeMessage) {
+          acc.push(message);
+        }
+      } else {
+        acc.push(message);
+      }
+
+      return acc;
+    }, []);
+  },
+};
+
+module.exports = {
+  processors: {
+    '.ts': processors,
+    '.js': processors,
+  },
+};
